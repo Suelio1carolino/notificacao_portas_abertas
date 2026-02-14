@@ -1,0 +1,142 @@
+blueprint:
+  name: Notificação de Portas Abertas com Repetição
+  description: |
+    Verifica se portas estão abertas em um horário específico e envia 
+    notificações persistentes repetidas a cada intervalo definido.
+  domain: automation
+  input:
+    door_sensors:
+      name: Sensores das Portas
+      description: Selecione todos os sensores de porta que deseja monitorar
+      selector:
+        entity:
+          multiple: true
+          filter:
+            - domain: binary_sensor
+              device_class: door
+    check_time:
+      name: Horário de Verificação
+      description: Horário para verificar se as portas estão abertas
+      default: "22:00:00"
+      selector:
+        time:
+    repeat_interval:
+      name: Intervalo de Repetição (minutos)
+      description: A cada quantos minutos repetir a notificação
+      default: 10
+      selector:
+        number:
+          min: 1
+          max: 60
+          unit_of_measurement: "minutos"
+    end_time:
+      name: Horário Final
+      description: Horário para parar de enviar notificações
+      default: "06:00:00"
+      selector:
+        time:
+    notification_service:
+      name: Serviço de Notificação
+      description: Serviço de notificação para usar (ex. notify.mobile_app_seu_celular)
+      default: notify.notify
+      selector:
+        text:
+    notification_title:
+      name: Título da Notificação
+      description: Título da notificação
+      default: "⚠️ Portas Abertas"
+      selector:
+        text:
+    use_persistent:
+      name: Usar Notificação Persistente
+      description: Criar também uma notificação persistente na interface do HA
+      default: true
+      selector:
+        boolean:
+
+mode: restart
+
+variables:
+  door_sensors: !input door_sensors
+  notification_service: !input notification_service
+  notification_title: !input notification_title
+  use_persistent: !input use_persistent
+  
+trigger:
+  - platform: time
+    at: !input check_time
+    id: "initial_check"
+  - platform: time_pattern
+    minutes: !input repeat_interval
+    id: "repeat_check"
+
+condition:
+  - condition: template
+    value_template: >
+      {% set ns = namespace(count=0) %}
+      {% for sensor in door_sensors %}
+        {% if is_state(sensor, 'on') %}
+          {% set ns.count = ns.count + 1 %}
+        {% endif %}
+      {% endfor %}
+      {{ ns.count > 0 }}
+  - condition: or
+    conditions:
+      - condition: trigger
+        id: "initial_check"
+      - condition: and
+        conditions:
+          - condition: time
+            after: !input check_time
+            before: !input end_time
+          - condition: trigger
+            id: "repeat_check"
+
+action:
+  - variables:
+      open_doors: >
+        {% set ns = namespace(doors=[]) %}
+        {% for sensor in door_sensors %}
+          {% if is_state(sensor, 'on') %}
+            {% set ns.doors = ns.doors + [state_attr(sensor, 'friendly_name') or sensor] %}
+          {% endif %}
+        {% endfor %}
+        {{ ns.doors | join(', ') }}
+      door_count: >
+        {% set ns = namespace(count=0) %}
+        {% for sensor in door_sensors %}
+          {% if is_state(sensor, 'on') %}
+            {% set ns.count = ns.count + 1 %}
+          {% endif %}
+        {% endfor %}
+        {{ ns.count }}
+  
+  - choose:
+      - conditions:
+          - condition: template
+            value_template: "{{ use_persistent }}"
+        sequence:
+          - service: persistent_notification.create
+            data:
+              title: "{{ notification_title }}"
+              message: >
+                {% if door_count == 1 %}
+                  A seguinte porta está aberta: {{ open_doors }}
+                {% else %}
+                  As seguintes {{ door_count }} portas estão abertas: {{ open_doors }}
+                {% endif %}
+              notification_id: "portas_abertas_alert"
+  
+  - service: "{{ notification_service }}"
+    data:
+      title: "{{ notification_title }}"
+      message: >
+        {% if door_count == 1 %}
+          A seguinte porta está aberta: {{ open_doors }}
+        {% else %}
+          As seguintes {{ door_count }} portas estão abertas: {{ open_doors }}
+        {% endif %}
+      data:
+        tag: "portas_abertas"
+        sticky: true
+        priority: high
