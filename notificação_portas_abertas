@@ -1,5 +1,5 @@
 blueprint:
-  name: "Notificação de Portas Abertas - v2.0 Final"
+  name: "Notificação de Portas Abertas - v2.1 Fixed"
   description: |
     Monitora portas abertas em um período específico. 
     Envia notificações persistentes e limpa-as automaticamente ao fechar.
@@ -35,7 +35,7 @@ blueprint:
         time:
     notification_service:
       name: Serviço de Notificação
-      description: Ex: notify.mobile_app_seu_celular
+      description: "Exemplo: notify.mobile_app_seu_celular"
       default: notify.notify
       selector:
         text:
@@ -54,7 +54,6 @@ mode: parallel
 max: 10
 
 variables:
-  # Tornando os inputs acessíveis aos templates
   door_sensors: !input door_sensors
   door_open_state: !input door_open_state
   notification_service: !input notification_service
@@ -76,12 +75,9 @@ trigger:
 
 action:
   - variables:
-      # Lógica otimizada para identificar portas abertas
       open_entities: "{{ door_sensors | select('is_state', door_open_state) | list }}"
       door_count: "{{ open_entities | count }}"
       open_doors_text: "{{ expand(open_entities) | map(attribute='name') | join(', ') }}"
-      
-      # Verifica se estamos dentro da janela de horário
       is_monitoring_period: >
         {% set current = now().strftime('%H:%M') %}
         {% set start = check_time[0:5] %}
@@ -93,7 +89,7 @@ action:
         {% endif %}
 
   - choose:
-      # CASO 1: Todas as portas fechadas -> Limpar notificações (Sempre)
+      # CASO 1: Todas as portas fechadas -> Limpar notificações
       - conditions:
           - condition: template
             value_template: "{{ door_count == 0 }}"
@@ -111,7 +107,7 @@ action:
               data:
                 tag: "portas_abertas"
 
-      # CASO 2: Há portas abertas -> Notificar (Se for horário ou mudança de estado)
+      # CASO 2: Há portas abertas -> Notificar
       - conditions:
           - condition: template
             value_template: "{{ door_count > 0 }}"
@@ -132,7 +128,6 @@ action:
                   - condition: template
                     value_template: "{{ is_monitoring_period }}"
         sequence:
-          # Notificação no Painel do HA
           - if:
               - condition: template
                 value_template: "{{ use_persistent }}"
@@ -146,7 +141,6 @@ action:
                     {{ open_doors_text }}
                     Verificado em: {{ now().strftime('%H:%M') }}
 
-          # Notificação para o Serviço (Celular)
           - service: "{{ notification_service }}"
             data:
               title: "{{ notification_title }}"
@@ -154,7 +148,6 @@ action:
                 {{ 'Aberta: ' if door_count == 1 else door_count ~ ' portas abertas: ' }} {{ open_doors_text }}
               data:
                 tag: "portas_abertas"
-                group: "seguranca-portas"
                 sticky: true
                 priority: high
-                icon: "mdi:door-open"
+                notification_icon: "mdi:door-open"
