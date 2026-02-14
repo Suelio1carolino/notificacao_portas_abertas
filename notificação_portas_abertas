@@ -75,6 +75,7 @@ variables:
   notification_title: !input notification_title
   use_persistent: !input use_persistent
   door_open_state: !input door_open_state
+  repeat_interval: !input repeat_interval
   
 trigger:
   # Verificação inicial no horário definido
@@ -82,9 +83,9 @@ trigger:
     at: !input check_time
     id: "initial_check"
   
-  # Repetição a cada intervalo
+  # Repetição a cada 1 minuto (filtrado por condição)
   - platform: time_pattern
-    minutes: !input repeat_interval
+    minutes: "/1"
     id: "repeat_check"
   
   # Quando alguma porta mudar de estado
@@ -132,6 +133,8 @@ action:
         {% else %}
           {{ current >= start or current < stop }}
         {% endif %}
+      should_repeat_now: >
+        {{ now().minute % repeat_interval == 0 }}
 
   - choose:
       # Se todas as portas estão fechadas, limpar notificações
@@ -174,6 +177,8 @@ action:
                     id: "repeat_check"
                   - condition: template
                     value_template: "{{ is_monitoring_period }}"
+                  - condition: template
+                    value_template: "{{ should_repeat_now }}"
         sequence:
           - choose:
               - conditions:
