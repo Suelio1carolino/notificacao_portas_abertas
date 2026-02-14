@@ -1,9 +1,11 @@
 blueprint:
-  name: Notificação Inteligente de Portas Abertas v2
+  name: Notificação Inteligente de Portas Abertas (Corrigido)
   description: |
     Verifica se portas estão abertas em um horário específico, envia notificações
     persistentes repetidas a cada intervalo definido, e limpa automaticamente 
     as notificações quando todas as portas forem fechadas.
+    
+    VERSÃO CORRIGIDA - sem erros de comparação de datetime
   domain: automation
   input:
     door_sensors:
@@ -33,7 +35,7 @@ blueprint:
         time:
     repeat_interval:
       name: Intervalo de Repetição (minutos)
-      description: A cada quantos minutos repetir a notificação (use /N para divisores de 60)
+      description: A cada quantos minutos repetir a notificação
       default: 10
       selector:
         number:
@@ -73,8 +75,6 @@ variables:
   notification_title: !input notification_title
   use_persistent: !input use_persistent
   door_open_state: !input door_open_state
-  check_time: !input check_time
-  end_time: !input end_time
   
 trigger:
   # Verificação inicial no horário definido
@@ -94,7 +94,7 @@ trigger:
 
 action:
   - variables:
-      open_doors: >
+      open_doors_list: >
         {% set ns = namespace(doors=[]) %}
         {% for sensor in door_sensors %}
           {% if is_state(sensor, door_open_state) %}
@@ -120,13 +120,17 @@ action:
         {{ ns.count }}
       all_doors_closed: >
         {{ door_count | int == 0 }}
-      check_time_obj: "{{ today_at(check_time) }}"
-      end_time_obj: "{{ today_at(end_time) }}"
+      current_time: "{{ now().strftime('%H:%M') }}"
+      check_time_str: "{{ (states('input_datetime.dummy') if false else check_time)[0:5] }}"
+      end_time_str: "{{ (states('input_datetime.dummy') if false else end_time)[0:5] }}"
       is_monitoring_period: >
-        {% if end_time_obj > check_time_obj %}
-          {{ now() >= check_time_obj and now() < end_time_obj }}
+        {% set current = now().strftime('%H:%M') %}
+        {% set start = check_time[0:5] %}
+        {% set stop = end_time[0:5] %}
+        {% if stop > start %}
+          {{ current >= start and current < stop }}
         {% else %}
-          {{ now() >= check_time_obj or now() < end_time_obj }}
+          {{ current >= start or current < stop }}
         {% endif %}
 
   - choose:
