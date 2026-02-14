@@ -1,11 +1,11 @@
 blueprint:
-  name: Notificação Inteligente de Portas Abertas (Corrigido)
+  name: Notificação de Portas Abertas - Versão Final
   description: |
-    Verifica se portas estão abertas em um horário específico, envia notificações
-    persistentes repetidas a cada intervalo definido, e limpa automaticamente 
-    as notificações quando todas as portas forem fechadas.
+    Verifica se portas estão abertas em um horário específico e envia notificações
+    persistentes. Limpa automaticamente quando todas as portas forem fechadas.
     
-    VERSÃO CORRIGIDA - sem erros de comparação de datetime
+    IMPORTANTE: O intervalo de repetição é fixo a cada 10 minutos.
+    Para outros intervalos, edite o YAML manualmente após criar.
   domain: automation
   input:
     door_sensors:
@@ -33,15 +33,6 @@ blueprint:
       default: "22:00:00"
       selector:
         time:
-    repeat_interval:
-      name: Intervalo de Repetição (minutos)
-      description: A cada quantos minutos repetir a notificação
-      default: 10
-      selector:
-        number:
-          min: 1
-          max: 60
-          unit_of_measurement: "minutos"
     end_time:
       name: Horário Final
       description: Horário para parar de enviar notificações
@@ -75,7 +66,6 @@ variables:
   notification_title: !input notification_title
   use_persistent: !input use_persistent
   door_open_state: !input door_open_state
-  repeat_interval: !input repeat_interval
   
 trigger:
   # Verificação inicial no horário definido
@@ -83,9 +73,9 @@ trigger:
     at: !input check_time
     id: "initial_check"
   
-  # Repetição a cada 1 minuto (filtrado por condição)
+  # Repetição a cada 10 minutos
   - platform: time_pattern
-    minutes: "/1"
+    minutes: "/10"
     id: "repeat_check"
   
   # Quando alguma porta mudar de estado
@@ -121,9 +111,6 @@ action:
         {{ ns.count }}
       all_doors_closed: >
         {{ door_count | int == 0 }}
-      current_time: "{{ now().strftime('%H:%M') }}"
-      check_time_str: "{{ (states('input_datetime.dummy') if false else check_time)[0:5] }}"
-      end_time_str: "{{ (states('input_datetime.dummy') if false else end_time)[0:5] }}"
       is_monitoring_period: >
         {% set current = now().strftime('%H:%M') %}
         {% set start = check_time[0:5] %}
@@ -133,8 +120,6 @@ action:
         {% else %}
           {{ current >= start or current < stop }}
         {% endif %}
-      should_repeat_now: >
-        {{ now().minute % repeat_interval == 0 }}
 
   - choose:
       # Se todas as portas estão fechadas, limpar notificações
@@ -177,8 +162,6 @@ action:
                     id: "repeat_check"
                   - condition: template
                     value_template: "{{ is_monitoring_period }}"
-                  - condition: template
-                    value_template: "{{ should_repeat_now }}"
         sequence:
           - choose:
               - conditions:
