@@ -1,5 +1,5 @@
 blueprint:
-  name: Notificação Inteligente de Portas Abertas
+  name: Notificação Inteligente de Portas Abertas v2
   description: |
     Verifica se portas estão abertas em um horário específico, envia notificações
     persistentes repetidas a cada intervalo definido, e limpa automaticamente 
@@ -14,7 +14,17 @@ blueprint:
           multiple: true
           filter:
             - domain: binary_sensor
-              device_class: door
+    door_open_state:
+      name: Estado quando Porta Aberta
+      description: Qual é o estado do sensor quando a porta está ABERTA?
+      default: "on"
+      selector:
+        select:
+          options:
+            - label: "on (ligado)"
+              value: "on"
+            - label: "off (desligado)"
+              value: "off"
     check_time:
       name: Horário de Verificação Inicial
       description: Horário para verificar se as portas estão abertas
@@ -23,7 +33,7 @@ blueprint:
         time:
     repeat_interval:
       name: Intervalo de Repetição (minutos)
-      description: A cada quantos minutos repetir a notificação
+      description: A cada quantos minutos repetir a notificação (use /N para divisores de 60)
       default: 10
       selector:
         number:
@@ -62,6 +72,9 @@ variables:
   notification_service: !input notification_service
   notification_title: !input notification_title
   use_persistent: !input use_persistent
+  door_open_state: !input door_open_state
+  check_time: !input check_time
+  end_time: !input end_time
   
 trigger:
   # Verificação inicial no horário definido
@@ -84,7 +97,7 @@ action:
       open_doors: >
         {% set ns = namespace(doors=[]) %}
         {% for sensor in door_sensors %}
-          {% if is_state(sensor, 'on') %}
+          {% if is_state(sensor, door_open_state) %}
             {% set ns.doors = ns.doors + [state_attr(sensor, 'friendly_name') or sensor] %}
           {% endif %}
         {% endfor %}
@@ -92,7 +105,7 @@ action:
       open_doors_text: >
         {% set ns = namespace(doors=[]) %}
         {% for sensor in door_sensors %}
-          {% if is_state(sensor, 'on') %}
+          {% if is_state(sensor, door_open_state) %}
             {% set ns.doors = ns.doors + [state_attr(sensor, 'friendly_name') or sensor] %}
           {% endif %}
         {% endfor %}
@@ -100,16 +113,21 @@ action:
       door_count: >
         {% set ns = namespace(count=0) %}
         {% for sensor in door_sensors %}
-          {% if is_state(sensor, 'on') %}
+          {% if is_state(sensor, door_open_state) %}
             {% set ns.count = ns.count + 1 %}
           {% endif %}
         {% endfor %}
         {{ ns.count }}
       all_doors_closed: >
         {{ door_count | int == 0 }}
+      check_time_obj: "{{ today_at(check_time) }}"
+      end_time_obj: "{{ today_at(end_time) }}"
       is_monitoring_period: >
-        {{ now().time() >= (strptime(check_time, '%H:%M:%S').time()) or 
-           now().time() < (strptime(end_time, '%H:%M:%S').time()) }}
+        {% if end_time_obj > check_time_obj %}
+          {{ now() >= check_time_obj and now() < end_time_obj }}
+        {% else %}
+          {{ now() >= check_time_obj or now() < end_time_obj }}
+        {% endif %}
 
   - choose:
       # Se todas as portas estão fechadas, limpar notificações
@@ -168,7 +186,7 @@ action:
                           As seguintes {{ door_count }} portas estão abertas: {{ open_doors_text }}
                         {% endif %}
                         
-                        Última verificação: {{ now().strftime('%H:%M:%S') }}
+                        Última verificação: {{ now().strftime('%d/%m/%Y %H:%M:%S') }}
                       notification_id: "portas_abertas_alert"
           
           - service: "{{ notification_service }}"
@@ -185,10 +203,3 @@ action:
                 sticky: true
                 priority: high
                 notification_icon: "mdi:door-open"
-```
-
-## Como Usar
-
-1. **Salve o arquivo** como `notificacao_portas_abertas_completo.yaml` na pasta:
-```
-   config/blueprints/automation/
