@@ -1,8 +1,9 @@
 blueprint:
-  name: Notificação de Portas Abertas com Repetição
+  name: Notificação Inteligente de Portas Abertas
   description: |
-    Verifica se portas estão abertas em um horário específico e envia 
-    notificações persistentes repetidas a cada intervalo definido.
+    Verifica se portas estão abertas em um horário específico, envia notificações
+    persistentes repetidas a cada intervalo definido, e limpa automaticamente 
+    as notificações quando todas as portas forem fechadas.
   domain: automation
   input:
     door_sensors:
@@ -15,7 +16,7 @@ blueprint:
             - domain: binary_sensor
               device_class: door
     check_time:
-      name: Horário de Verificação
+      name: Horário de Verificação Inicial
       description: Horário para verificar se as portas estão abertas
       default: "22:00:00"
       selector:
@@ -49,7 +50,7 @@ blueprint:
         text:
     use_persistent:
       name: Usar Notificação Persistente
-      description: Criar também uma notificação persistente na interface do HA
+      description: Criar também uma notificação persistente na interface do Home Assistant
       default: true
       selector:
         boolean:
@@ -63,38 +64,32 @@ variables:
   use_persistent: !input use_persistent
   
 trigger:
+  # Verificação inicial no horário definido
   - platform: time
     at: !input check_time
     id: "initial_check"
+  
+  # Repetição a cada intervalo
   - platform: time_pattern
     minutes: !input repeat_interval
     id: "repeat_check"
-
-condition:
-  - condition: template
-    value_template: >
-      {% set ns = namespace(count=0) %}
-      {% for sensor in door_sensors %}
-        {% if is_state(sensor, 'on') %}
-          {% set ns.count = ns.count + 1 %}
-        {% endif %}
-      {% endfor %}
-      {{ ns.count > 0 }}
-  - condition: or
-    conditions:
-      - condition: trigger
-        id: "initial_check"
-      - condition: and
-        conditions:
-          - condition: time
-            after: !input check_time
-            before: !input end_time
-          - condition: trigger
-            id: "repeat_check"
+  
+  # Quando alguma porta mudar de estado
+  - platform: state
+    entity_id: !input door_sensors
+    id: "door_state_change"
 
 action:
   - variables:
       open_doors: >
+        {% set ns = namespace(doors=[]) %}
+        {% for sensor in door_sensors %}
+          {% if is_state(sensor, 'on') %}
+            {% set ns.doors = ns.doors + [state_attr(sensor, 'friendly_name') or sensor] %}
+          {% endif %}
+        {% endfor %}
+        {{ ns.doors }}
+      open_doors_text: >
         {% set ns = namespace(doors=[]) %}
         {% for sensor in door_sensors %}
           {% if is_state(sensor, 'on') %}
@@ -110,33 +105,90 @@ action:
           {% endif %}
         {% endfor %}
         {{ ns.count }}
-  
+      all_doors_closed: >
+        {{ door_count | int == 0 }}
+      is_monitoring_period: >
+        {{ now().time() >= (strptime(check_time, '%H:%M:%S').time()) or 
+           now().time() < (strptime(end_time, '%H:%M:%S').time()) }}
+
   - choose:
+      # Se todas as portas estão fechadas, limpar notificações
       - conditions:
           - condition: template
-            value_template: "{{ use_persistent }}"
+            value_template: "{{ all_doors_closed }}"
+          - condition: template
+            value_template: "{{ is_monitoring_period }}"
+          - condition: trigger
+            id: "door_state_change"
         sequence:
-          - service: persistent_notification.create
+          - choose:
+              - conditions:
+                  - condition: template
+                    value_template: "{{ use_persistent }}"
+                sequence:
+                  - service: persistent_notification.dismiss
+                    data:
+                      notification_id: "portas_abertas_alert"
+          
+          - service: "{{ notification_service }}"
+            data:
+              message: "clear_notification"
+              data:
+                tag: "portas_abertas"
+
+      # Se há portas abertas, enviar notificação
+      - conditions:
+          - condition: template
+            value_template: "{{ not all_doors_closed }}"
+          - condition: or
+            conditions:
+              # Verificação inicial
+              - condition: trigger
+                id: "initial_check"
+              # Repetição periódica durante o período de monitoramento
+              - condition: and
+                conditions:
+                  - condition: trigger
+                    id: "repeat_check"
+                  - condition: template
+                    value_template: "{{ is_monitoring_period }}"
+        sequence:
+          - choose:
+              - conditions:
+                  - condition: template
+                    value_template: "{{ use_persistent }}"
+                sequence:
+                  - service: persistent_notification.create
+                    data:
+                      title: "{{ notification_title }}"
+                      message: >
+                        {% if door_count == 1 %}
+                          A seguinte porta está aberta: {{ open_doors_text }}
+                        {% else %}
+                          As seguintes {{ door_count }} portas estão abertas: {{ open_doors_text }}
+                        {% endif %}
+                        
+                        Última verificação: {{ now().strftime('%H:%M:%S') }}
+                      notification_id: "portas_abertas_alert"
+          
+          - service: "{{ notification_service }}"
             data:
               title: "{{ notification_title }}"
               message: >
                 {% if door_count == 1 %}
-                  A seguinte porta está aberta: {{ open_doors }}
+                  A seguinte porta está aberta: {{ open_doors_text }}
                 {% else %}
-                  As seguintes {{ door_count }} portas estão abertas: {{ open_doors }}
+                  As seguintes {{ door_count }} portas estão abertas: {{ open_doors_text }}
                 {% endif %}
-              notification_id: "portas_abertas_alert"
-  
-  - service: "{{ notification_service }}"
-    data:
-      title: "{{ notification_title }}"
-      message: >
-        {% if door_count == 1 %}
-          A seguinte porta está aberta: {{ open_doors }}
-        {% else %}
-          As seguintes {{ door_count }} portas estão abertas: {{ open_doors }}
-        {% endif %}
-      data:
-        tag: "portas_abertas"
-        sticky: true
-        priority: high
+              data:
+                tag: "portas_abertas"
+                sticky: true
+                priority: high
+                notification_icon: "mdi:door-open"
+```
+
+## Como Usar
+
+1. **Salve o arquivo** como `notificacao_portas_abertas_completo.yaml` na pasta:
+```
+   config/blueprints/automation/
